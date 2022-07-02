@@ -15,12 +15,13 @@
 #include <fcntl.h>
 #include <stdlib.h>
 
+
 #define MSG(fmt, ...) printf(fmt "\n", ##__VA_ARGS__)
 
 #define ASSERT(cond) \
 	if (!(cond)) { \
 		MSG("ERROR @ %s:%d: (%s) failed", __FILE__, __LINE__, #cond); \
-		return; \
+		return 0; \
 	}
 
 static int width = 1280, height = 720;
@@ -31,19 +32,129 @@ typedef struct {
 	int fd, offset, pitch;
 } DmaBuf;
 
-void runEGL(const DmaBuf *img) {
+uint32_t prepareImage(const int fd) {
+#define MAX_FBS 16
+	
+	/*uint32_t fbs[MAX_FBS];
+	int count_fbs = 0;
+	
+	drmModePlaneResPtr planes = drmModeGetPlaneResources(fd);
+	if (planes) {
+		for (uint32_t i = 0; i < planes->count_planes; ++i) {
+			drmModePlanePtr plane = drmModeGetPlane(fd, planes->planes[i]);
+			if (plane) {
+				if (plane->fb_id) {
+					int found = 0;
+					for (int k = 0; k < count_fbs; ++k) {
+						if (fbs[k] == plane->fb_id) {
+							found = 1;
+							break;
+						}
+					}
+
+					if (!found) {
+						if (count_fbs == MAX_FBS) {
+							MSG("Max number of fbs (%d) exceeded", MAX_FBS);
+						} else {
+							fbs[count_fbs++] = plane->fb_id;
+						}
+					}
+				}
+				drmModeFreePlane(plane);
+			}
+		}
+		drmModeFreePlaneResources(planes);
+	}
+
+	for (int i = 0; i < count_fbs; ++i) {
+		//MSG("%d: %#x", i, fbs[i]);
+		drmModeFBPtr fb = drmModeGetFB(fd, fbs[i]);
+		if (!fb) {
+			MSG("\t\tERROR");
+			continue;
+		}
+
+		//MSG("\twidth=%u height=%u pitch=%u bpp=%u depth=%u handle=%#x",
+		//	fb->width, fb->height, fb->pitch, fb->bpp, fb->depth, fb->handle);
+
+		drmModeFreeFB(fb);
+	}
+	
+	return fbs[0];*/
+	
+	drmModePlaneResPtr planes = drmModeGetPlaneResources(fd);
+	drmModePlanePtr plane = drmModeGetPlane(fd, planes->planes[0]);
+	
+	uint32_t fb_id = plane->fb_id;
+	
+	drmModeFreePlaneResources(planes);
+	drmModeFreePlane(plane);
+	
+	//MSG("%#x", plane->fb_id);
+	return fb_id;
+}
+
+int main(int argc, const char *argv[]) {
+	const char *card = (argc > 2) ? argv[2] : "/dev/dri/card0";
+
+	MSG("Opening card %s", card);
+	const int drmfd = open(card, O_RDONLY);
+	if (drmfd < 0) {
+		perror("Cannot open card");
+		return 1;
+	}
+	drmSetClientCap(drmfd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
+	
+	const int available = drmAvailable();
+	if (!available)
+		return 0;
+	
+	
+	// Find DRM video source
+	uint32_t fb_id = prepareImage(drmfd);
+
+	if (fb_id == 0) {
+		MSG("Not found fb_id");
+		return 1;
+	}
+
+	int dma_buf_fd = -1;
+	drmModeFBPtr fb = drmModeGetFB(drmfd, fb_id);
+	if (!fb->handle) {
+		MSG("Not permitted to get fb handles. Run either with sudo, or setcap cap_sys_admin+ep %s", argv[0]);
+		
+		if (dma_buf_fd >= 0)
+			close(dma_buf_fd);
+		if (fb)
+			drmModeFreeFB(fb);
+		close(drmfd);
+		return 0;
+	}
+
+	DmaBuf img;
+	img.width = fb->width;
+	img.height = fb->height;
+	img.pitch = fb->pitch;
+	img.offset = 0;
+	img.fourcc = DRM_FORMAT_XRGB8888; // FIXME
+	drmPrimeHandleToFD(drmfd, fb->handle, 0, &dma_buf_fd);
+	img.fd = dma_buf_fd;
+
+
+	
+	// render all
 	Display *xdisp;
 	ASSERT(xdisp = XOpenDisplay(NULL));
 	eglBindAPI(EGL_OPENGL_API);
 	EGLDisplay edisp = eglGetDisplay(xdisp);
 	EGLint ver_min, ver_maj;
 	eglInitialize(edisp, &ver_maj, &ver_min);
-	MSG("EGL: version %d.%d", ver_maj, ver_min);
+	/*MSG("EGL: version %d.%d", ver_maj, ver_min);
 	MSG("EGL: EGL_VERSION: '%s'", eglQueryString(edisp, EGL_VERSION));
 	MSG("EGL: EGL_VENDOR: '%s'", eglQueryString(edisp, EGL_VENDOR));
 	MSG("EGL: EGL_CLIENT_APIS: '%s'", eglQueryString(edisp, EGL_CLIENT_APIS));
 	MSG("EGL: client EGL_EXTENSIONS: '%s'", eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS));
-	MSG("EGL: EGL_EXTENSIONS: '%s'", eglQueryString(edisp, EGL_EXTENSIONS));
+	MSG("EGL: EGL_EXTENSIONS: '%s'", eglQueryString(edisp, EGL_EXTENSIONS));*/
 
 	static const EGLint econfattrs[] = {
 		EGL_BUFFER_SIZE, 32,
@@ -111,16 +222,16 @@ void runEGL(const DmaBuf *img) {
 	ASSERT(eglMakeCurrent(edisp, esurf,
 		esurf, ectx));
 
-	MSG("%s", glGetString(GL_EXTENSIONS));
+	//MSG("%s", glGetString(GL_EXTENSIONS));
 
 	// FIXME check for EGL_EXT_image_dma_buf_import
 	EGLAttrib eimg_attrs[] = {
-		EGL_WIDTH, img->width,
-		EGL_HEIGHT, img->height,
-		EGL_LINUX_DRM_FOURCC_EXT, img->fourcc,
-		EGL_DMA_BUF_PLANE0_FD_EXT, img->fd,
-		EGL_DMA_BUF_PLANE0_OFFSET_EXT, img->offset,
-		EGL_DMA_BUF_PLANE0_PITCH_EXT, img->pitch,
+		EGL_WIDTH, img.width,
+		EGL_HEIGHT, img.height,
+		EGL_LINUX_DRM_FOURCC_EXT, img.fourcc,
+		EGL_DMA_BUF_PLANE0_FD_EXT, img.fd,
+		EGL_DMA_BUF_PLANE0_OFFSET_EXT, img.offset,
+		EGL_DMA_BUF_PLANE0_PITCH_EXT, img.pitch,
 		EGL_NONE
 	};
 	EGLImage eimg = eglCreateImage(edisp, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, 0,
@@ -182,6 +293,57 @@ void runEGL(const DmaBuf *img) {
 		}
 
 		{
+
+	
+			// Find DRM video source
+			uint32_t fb_id = prepareImage(drmfd);
+
+			if (fb_id == 0) {
+				MSG("Not found fb_id");
+			}
+			else {
+				if (dma_buf_fd >= 0)
+					close(dma_buf_fd);
+					
+				drmModeFBPtr fb = drmModeGetFB(drmfd, fb_id);
+				if (!fb->handle) {
+					MSG("Not permitted to get fb handles. Run either with sudo, or setcap cap_sys_admin+ep %s", argv[0]);
+					
+					if (fb)
+						drmModeFreeFB(fb);
+					close(drmfd);
+					return 0;
+				}
+
+				img.width = fb->width;
+				img.height = fb->height;
+				img.pitch = fb->pitch;
+				img.offset = 0;
+				img.fourcc = DRM_FORMAT_XRGB8888; // FIXME
+				drmPrimeHandleToFD(drmfd, fb->handle, 0, &dma_buf_fd);
+				img.fd = dma_buf_fd;
+				
+				eglDestroyImage(edisp, eimg);
+				EGLAttrib eimg_attrs[] = {
+					EGL_WIDTH, img.width,
+					EGL_HEIGHT, img.height,
+					EGL_LINUX_DRM_FOURCC_EXT, img.fourcc,
+					EGL_DMA_BUF_PLANE0_FD_EXT, img.fd,
+					EGL_DMA_BUF_PLANE0_OFFSET_EXT, img.offset,
+					EGL_DMA_BUF_PLANE0_PITCH_EXT, img.pitch,
+					EGL_NONE
+				};
+				eimg = eglCreateImage(edisp, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, 0,
+					eimg_attrs);
+				ASSERT(eimg);
+				
+				glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, eimg);
+			}
+			//MSG("%#x", img.fd);
+			
+			// rebind texture
+			glBindTexture(GL_TEXTURE_2D, tex);
+			
 			glViewport(0, 0, width, height);
 			glClear(GL_COLOR_BUFFER_BIT);
 
@@ -199,68 +361,4 @@ exit:
 	XDestroyWindow(xdisp, xwin);
 	eglTerminate(edisp);
 	XCloseDisplay(xdisp);
-}
-
-int main(int argc, const char *argv[]) {
-
-	uint32_t fb_id = 0;
-
-	if (argc < 2) {
-		MSG("usage: %s fb_id", argv[0]);
-		return 1;
-	}
-
-	{
-		char *endptr;
-		fb_id = strtol(argv[1], &endptr, 0);
-		if (*endptr != '\0') {
-			MSG("%s is not valid framebuffer id", argv[1]);
-			return 1;
-		}
-	}
-
-	const char *card = (argc > 2) ? argv[2] : "/dev/dri/card0";
-
-	MSG("Opening card %s", card);
-	const int drmfd = open(card, O_RDONLY);
-	if (drmfd < 0) {
-		perror("Cannot open card");
-		return 1;
-	}
-
-	int dma_buf_fd = -1;
-	drmModeFBPtr fb = drmModeGetFB(drmfd, fb_id);
-	if (!fb) {
-		MSG("Cannot open fb %#x", fb_id);
-		goto cleanup;
-	}
-
-	MSG("fb_id=%#x width=%u height=%u pitch=%u bpp=%u depth=%u handle=%#x",
-		fb_id, fb->width, fb->height, fb->pitch, fb->bpp, fb->depth, fb->handle);
-
-	if (!fb->handle) {
-		MSG("Not permitted to get fb handles. Run either with sudo, or setcap cap_sys_admin+ep %s", argv[0]);
-		goto cleanup;
-	}
-
-	DmaBuf img;
-	img.width = fb->width;
-	img.height = fb->height;
-	img.pitch = fb->pitch;
-	img.offset = 0;
-	img.fourcc = DRM_FORMAT_XRGB8888; // FIXME
-
-	const int ret = drmPrimeHandleToFD(drmfd, fb->handle, 0, &dma_buf_fd);
-	MSG("drmPrimeHandleToFD = %d, fd = %d", ret, dma_buf_fd);
-	img.fd = dma_buf_fd;
-
-	runEGL(&img);
-
-cleanup:
-	if (dma_buf_fd >= 0)
-		close(dma_buf_fd);
-	if (fb)
-		drmModeFreeFB(fb);
-	close(drmfd);
-	return 0;
 }
