@@ -32,65 +32,39 @@ typedef struct {
 	int fd, offset, pitch;
 } DmaBuf;
 
+uint32_t lastGoodPlane = 0;
+
 uint32_t prepareImage(const int fd) {
-#define MAX_FBS 16
-	
-	/*uint32_t fbs[MAX_FBS];
-	int count_fbs = 0;
 	
 	drmModePlaneResPtr planes = drmModeGetPlaneResources(fd);
-	if (planes) {
+	
+	// Check the first plane (or last good)
+	drmModePlanePtr plane = drmModeGetPlane(fd, planes->planes[lastGoodPlane]);
+	uint32_t fb_id = plane->fb_id;
+	drmModeFreePlane(plane);
+	
+	// Find a good plane
+	if (fb_id == 0) {
 		for (uint32_t i = 0; i < planes->count_planes; ++i) {
 			drmModePlanePtr plane = drmModeGetPlane(fd, planes->planes[i]);
-			if (plane) {
-				if (plane->fb_id) {
-					int found = 0;
-					for (int k = 0; k < count_fbs; ++k) {
-						if (fbs[k] == plane->fb_id) {
-							found = 1;
-							break;
-						}
-					}
-
-					if (!found) {
-						if (count_fbs == MAX_FBS) {
-							MSG("Max number of fbs (%d) exceeded", MAX_FBS);
-						} else {
-							fbs[count_fbs++] = plane->fb_id;
-						}
-					}
-				}
+			
+			if (plane->fb_id != 0) {
+				lastGoodPlane = i;
+				fb_id = plane->fb_id;
+				//MSG("%d, %#x", i, fb_id);
+				
+				drmModeFreePlane(plane);
+				break;
+			}
+			else {
 				drmModeFreePlane(plane);
 			}
 		}
-		drmModeFreePlaneResources(planes);
 	}
-
-	for (int i = 0; i < count_fbs; ++i) {
-		//MSG("%d: %#x", i, fbs[i]);
-		drmModeFBPtr fb = drmModeGetFB(fd, fbs[i]);
-		if (!fb) {
-			MSG("\t\tERROR");
-			continue;
-		}
-
-		//MSG("\twidth=%u height=%u pitch=%u bpp=%u depth=%u handle=%#x",
-		//	fb->width, fb->height, fb->pitch, fb->bpp, fb->depth, fb->handle);
-
-		drmModeFreeFB(fb);
-	}
-	
-	return fbs[0];*/
-	
-	drmModePlaneResPtr planes = drmModeGetPlaneResources(fd);
-	drmModePlanePtr plane = drmModeGetPlane(fd, planes->planes[0]);
-	
-	uint32_t fb_id = plane->fb_id;
 	
 	drmModeFreePlaneResources(planes);
-	drmModeFreePlane(plane);
 	
-	//MSG("%#x", plane->fb_id);
+	//MSG("%#x", fb_id);
 	return fb_id;
 }
 
@@ -247,7 +221,8 @@ int main(int argc, const char *argv[]) {
 	ASSERT(glEGLImageTargetTexture2DOES);
 	glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, eimg);
 	ASSERT(glGetError() == 0);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
 	const char *fragment =
 		"#version 130\n"
@@ -304,8 +279,10 @@ int main(int argc, const char *argv[]) {
 			else {
 				if (dma_buf_fd >= 0)
 					close(dma_buf_fd);
+				if (fb)
+					drmModeFreeFB(fb);
 					
-				drmModeFBPtr fb = drmModeGetFB(drmfd, fb_id);
+				fb = drmModeGetFB(drmfd, fb_id);
 				if (!fb->handle) {
 					MSG("Not permitted to get fb handles. Run either with sudo, or setcap cap_sys_admin+ep %s", argv[0]);
 					
@@ -315,16 +292,16 @@ int main(int argc, const char *argv[]) {
 					return 0;
 				}
 
-				img.width = fb->width;
+				/*img.width = fb->width;
 				img.height = fb->height;
 				img.pitch = fb->pitch;
 				img.offset = 0;
-				img.fourcc = DRM_FORMAT_XRGB8888; // FIXME
+				img.fourcc = DRM_FORMAT_XRGB8888; // FIXME*/
 				drmPrimeHandleToFD(drmfd, fb->handle, 0, &dma_buf_fd);
-				img.fd = dma_buf_fd;
+				//img.fd = dma_buf_fd;
 				
 				eglDestroyImage(edisp, eimg);
-				EGLAttrib eimg_attrs[] = {
+				/*EGLAttrib eimg_attrs[] = {
 					EGL_WIDTH, img.width,
 					EGL_HEIGHT, img.height,
 					EGL_LINUX_DRM_FOURCC_EXT, img.fourcc,
@@ -332,7 +309,8 @@ int main(int argc, const char *argv[]) {
 					EGL_DMA_BUF_PLANE0_OFFSET_EXT, img.offset,
 					EGL_DMA_BUF_PLANE0_PITCH_EXT, img.pitch,
 					EGL_NONE
-				};
+				};*/
+				//eimg_attrs[7] = img.fd;
 				eimg = eglCreateImage(edisp, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, 0,
 					eimg_attrs);
 				ASSERT(eimg);
