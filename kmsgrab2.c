@@ -112,6 +112,7 @@ create_dmabuf_egl_image(EGLDisplay egl_display, unsigned int width,
 		}
 	}
 
+
 	attribs[atti++] = EGL_NONE;
 
 	return eglCreateImage(egl_display, EGL_NO_CONTEXT,
@@ -334,7 +335,6 @@ int main(int argc, const char *argv[]) {
 		MSG("Not found fb_id");
 		return 1;
 	}
-
 	int dma_buf_fd[4] = {-1, -1, -1, -1};
 	drmModeFB2Ptr fb = drmModeGetFB2(drmfd, fb_id);
 	if (!fb->handles[handle_id]) {
@@ -348,11 +348,24 @@ int main(int argc, const char *argv[]) {
 		return 0;
 	}
 
+
 	//drmPrimeHandleToFD(drmfd, fb->handles[0], O_RDONLY, (dma_buf_fd + 0));
-	drmPrimeHandleToFD(drmfd, fb->handles[0], 0, (dma_buf_fd + 0));
+
+
+	/*drmPrimeHandleToFD(drmfd, fb->handles[0], 0, (dma_buf_fd + 0));
 	drmPrimeHandleToFD(drmfd, fb->handles[1], 0, (dma_buf_fd + 1));
 	drmPrimeHandleToFD(drmfd, fb->handles[2], 0, (dma_buf_fd + 2));
-	drmPrimeHandleToFD(drmfd, fb->handles[3], 0, (dma_buf_fd + 3));
+	drmPrimeHandleToFD(drmfd, fb->handles[3], 0, (dma_buf_fd + 3));*/
+
+	int nplanes = 0;
+	for (int i = 0; i < 4; i++) {
+		if (fb->handles[i] == 0) {
+			nplanes = i;
+			break;
+		}
+		drmPrimeHandleToFD(drmfd, fb->handles[i], O_RDONLY, (dma_buf_fd + i));
+	}
+	MSG("Number of planes: %d", nplanes);
 	
 	PFNEGLQUERYDMABUFMODIFIERSEXTPROC eglQueryDmaBufModifiersEXT =
 		(PFNEGLQUERYDMABUFMODIFIERSEXTPROC)eglGetProcAddress("eglQueryDmaBufModifiersEXT");
@@ -395,8 +408,9 @@ int main(int argc, const char *argv[]) {
 	// *modifiers = modifier_list;
 	// *n_modifiers = (EGLuint64KHR)max_modifiers;
 	
+
 	EGLImage eimg = create_dmabuf_egl_image(edisp, fb->width, fb->height,
-					    DRM_FORMAT_XRGB8888, 3, dma_buf_fd, fb->pitches,
+					    DRM_FORMAT_XRGB8888, nplanes, dma_buf_fd, fb->pitches,
 					    fb->offsets, modifier_list);
 	ASSERT(eimg);
 	

@@ -33,7 +33,7 @@ $(OBJDIR)/enum: $(ENUM_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $^ $(LIBS) -o $@
 
-KMSGRAB_SOURCES = kmsgrab.c
+KMSGRAB_SOURCES = kmsgrab2.c
 KMSGRAB_OBJS = $(KMSGRAB_SOURCES:%=$(OBJDIR)/%.o)
 KMSGRAB_DEPS = $(KMSGRAB_OBJS:%=%.d)
 -include $(KMSGRAB_DEPS)
