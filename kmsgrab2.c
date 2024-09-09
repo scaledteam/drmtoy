@@ -372,7 +372,7 @@ int main(int argc, const char *argv[]) {
 	
 	
 	EGLint max_modifiers;
-	if (!eglQueryDmaBufModifiersEXT(edisp, DRM_FORMAT_XRGB8888, 0, NULL,
+	if (!eglQueryDmaBufModifiersEXT(edisp, fb->pixel_format, 0, NULL,
 					     NULL, &max_modifiers)) {
 		MSG("Cannot query the number of modifiers");
 		return false;
@@ -384,7 +384,7 @@ int main(int argc, const char *argv[]) {
 		MSG("Unable to allocate memory");
 		return false;
 	}
-	if (!eglQueryDmaBufModifiersEXT(edisp, DRM_FORMAT_XRGB8888,
+	if (!eglQueryDmaBufModifiersEXT(edisp, fb->pixel_format,
 					     max_modifiers, modifier_list,
 					     external_only, &max_modifiers)) {
 		MSG("Cannot query a list of modifiers:");
@@ -410,7 +410,7 @@ int main(int argc, const char *argv[]) {
 	
 
 	EGLImage eimg = create_dmabuf_egl_image(edisp, fb->width, fb->height,
-					    DRM_FORMAT_XRGB8888, nplanes, dma_buf_fd, fb->pitches,
+					    fb->pixel_format, nplanes, dma_buf_fd, fb->pitches,
 					    fb->offsets, modifier_list);
 	ASSERT(eimg);
 	
